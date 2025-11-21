@@ -11,27 +11,38 @@ fn main() -> lopdf::Result<()> {
 
     let output_file = &args[1];
     let input_files = &args[2..];
+    let mut page_prefix_number: Vec<String> = Vec::new();
 
     let mut merged = Document::with_version("1.5");
     let mut all_pages: Vec<(u32, u16)> = Vec::new();
 
-    // Merge PDFs
-    for file in input_files {
+    for (file_index, file) in input_files.iter().enumerate() {
         let mut doc = Document::load(file)?;
 
-        // Collect pages first
-        all_pages.extend(doc.get_pages().values().copied());
+        // Compute prefix letter ('A', 'B', ...)
+        let prefix = ((file_index as u8) + b'A') as char;
 
-        // Renumber and merge objects
+        // Renumber objects first to avoid conflicts
         doc.renumber_objects_with(merged.max_id + 1);
         merged.max_id = doc.max_id;
+
+        // Collect pages AFTER renumbering
+        let page_ids: Vec<(u32, u16)> = doc.get_pages().values().copied().collect();
+
+        // Generate prefix numbers
+        for (i, _) in page_ids.iter().enumerate() {
+            page_prefix_number.push(format!("{}{}", prefix, i + 1));
+        }
+
+        // Add to final pages list
+        all_pages.extend(page_ids.iter().copied());
+
+        // Merge objects
         merged.objects.extend(doc.objects);
     }
 
     // Convert pages to Object::Reference for "Kids"
-    let kids: Vec<Object> = all_pages.iter()
-        .map(|&(num, r#gen)| Object::Reference((num, r#gen)))
-        .collect();
+    let kids: Vec<Object> = all_pages.iter().map(|&page_id| Object::Reference(page_id)).collect();
 
     // Create Pages and Catalog objects
     let pages_id = merged.new_object_id();
@@ -43,7 +54,8 @@ fn main() -> lopdf::Result<()> {
             "Type" => "Pages",
             "Kids" => kids,
             "Count" => all_pages.len() as i32
-        }.into()
+        }
+        .into(),
     );
 
     merged.objects.insert(
@@ -51,14 +63,15 @@ fn main() -> lopdf::Result<()> {
         dictionary! {
             "Type" => "Catalog",
             "Pages" => pages_id
-        }.into()
+        }
+        .into(),
     );
 
     merged.trailer.set("Root", catalog_id);
 
     // Add page numbers
     for (i, page_id) in all_pages.iter().enumerate() {
-        add_page_number(&mut merged, *page_id, i + 1, all_pages.len())?;
+        add_page_number(&mut merged, *page_id, i + 1, all_pages.len(), &page_prefix_number)?;
     }
 
     merged.compress();
@@ -73,6 +86,7 @@ fn add_page_number(
     page_id: (u32, u16),
     page_number: usize,
     _page_count: usize,
+    page_prefix_number: &[String],
 ) -> lopdf::Result<()> {
     let page_obj = doc.get_object(page_id)?;
     let dict = page_obj.as_dict()?;
@@ -106,22 +120,22 @@ fn add_page_number(
     let text_y = y0 + 20.0;
 
     // Create page number content stream
-    let content = lopdf::content::Content {
+    let content = Content {
         operations: vec![
-            lopdf::content::Operation::new("BT", vec![]),
-            lopdf::content::Operation::new(
+            Operation::new("BT", vec![]),
+            Operation::new(
                 "Tf",
                 vec![Object::Name(b"Helvetica".to_vec()), Object::Real(12.0)],
             ),
-            lopdf::content::Operation::new(
+            Operation::new(
                 "Td",
                 vec![Object::Real(bottom_center_x as f32), Object::Real(text_y as f32)],
             ),
-            lopdf::content::Operation::new(
+            Operation::new(
                 "Tj",
-                vec![Object::string_literal(format!("{}", page_number))],
+                vec![Object::string_literal(format!("{}", page_prefix_number[page_number - 1]))],
             ),
-            lopdf::content::Operation::new("ET", vec![]),
+            Operation::new("ET", vec![]),
         ],
     };
 
