@@ -1,16 +1,94 @@
+use eframe::egui;
 use lopdf::{dictionary, Document, Object, Stream};
 use lopdf::content::{Content, Operation};
-use std::env;
+use rfd::FileDialog;
 
-fn main() -> lopdf::Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("Usage: rpdf_merge <output.pdf> <input1.pdf> <input2.pdf> ...");
-        std::process::exit(1);
+fn main() -> eframe::Result<()> {
+    let options = eframe::NativeOptions::default();
+    eframe::run_native(
+        "PDF Merger",
+        options,
+        Box::new(|_cc| Ok(Box::new(MergeApp::default()))),
+    )
+}
+
+#[derive(Default)]
+struct MergeApp {
+    input_files: Vec<String>,
+    output_file: Option<String>,
+    merge_status: String,
+}
+
+impl eframe::App for MergeApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("PDF Merger");
+
+            ui.separator();
+
+            // Select input files to merge and number
+            ui.label("Input PDF files:");
+            for file in &self.input_files {
+                ui.monospace(format!("• {}", file));
+            }
+
+            if ui.button("Add input files...").clicked() {
+                if let Some(files) = FileDialog::new()
+                    .add_filter("PDF", &["pdf"])
+                    .pick_files()
+                {
+                    // IMPORTANT: append rather than replace
+                    for file in files {
+                        self.input_files.push(file.display().to_string());
+                    }
+                }
+            }
+
+            ui.separator();
+
+            // Select the output file
+            ui.label("Output PDF file:");
+            if let Some(out) = &self.output_file {
+                ui.monospace(out);
+            }
+
+            if ui.button("Choose output file...").clicked() {
+                if let Some(file) = FileDialog::new()
+                    .add_filter("PDF", &["pdf"])
+                    .save_file()
+                {
+                    self.output_file = Some(file.display().to_string());
+                }
+            }
+
+            ui.separator();
+
+            // Merge the files together
+            if ui.button("Merge PDFs").clicked() {
+                if self.input_files.is_empty() {
+                    self.merge_status = "Error: No input files selected".into();
+                } else if self.output_file.is_none() {
+                    self.merge_status = "Error: No output file selected".into();
+                } else {
+                    match merge_and_number_files(
+                        self.input_files.clone(),
+                        self.output_file.clone().unwrap(),
+                    ) {
+                        Ok(_) => self.merge_status = "Merge complete!".into(),
+                        Err(e) => self.merge_status = format!("Error: {}", e),
+                    }
+                }
+            }
+
+            ui.separator();
+
+            ui.label(&self.merge_status);
+        });
     }
+}
 
-    let output_file = &args[1];
-    let input_files = &args[2..];
+/// Merge the files together and number them A1 ... A3, B1 ... B5, etc.
+pub fn merge_and_number_files(input_files: Vec<String>, output_file: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut page_prefix_number: Vec<String> = Vec::new();
 
     let mut merged = Document::with_version("1.5");
@@ -77,7 +155,6 @@ fn main() -> lopdf::Result<()> {
     merged.compress();
     merged.save(output_file)?;
 
-    println!("Merged PDF saved to {}", output_file);
     Ok(())
 }
 
