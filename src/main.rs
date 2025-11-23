@@ -2,15 +2,72 @@ use lopdf::{dictionary, Document, Object, Stream};
 use lopdf::content::{Content, Operation};
 use std::env;
 
-fn main() -> lopdf::Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("Usage: rpdf_merge <output.pdf> <input1.pdf> <input2.pdf> ...");
-        std::process::exit(1);
-    }
+use eframe::egui;
+use rfd::FileDialog;
 
-    let output_file = &args[1];
-    let input_files = &args[2..];
+fn main() -> eframe::Result<()> {
+    let options = eframe::NativeOptions::default();
+    eframe::run_native(
+        "PDF Merger",
+        options,
+        Box::new(|_cc| Ok(Box::new(MyApp::default()))),
+    )
+}
+
+#[derive(Default)]
+struct MyApp {
+    input_files: Vec<String>,
+    output_file: String,
+    merge_result: Option<String>,
+}
+
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+
+            ui.heading("PDF Merger");
+
+            ui.label("Input PDF files (one per line):");
+            for file in &mut self.input_files {
+                ui.text_edit_singleline(file);
+            }
+
+            if ui.button("Add another file").clicked() {
+                self.input_files.push(String::new());
+            }
+
+            ui.separator();
+
+            ui.label("Output PDF file:");
+            ui.text_edit_singleline(&mut self.output_file);
+
+            ui.separator();
+
+            //------------------------------------------------
+            // THIS is where we call your merge_wrapper()!!!
+            //------------------------------------------------
+            if ui.button("Merge PDFs").clicked() {
+                match merge_wrapper(self.input_files.clone(), self.output_file.clone()) {
+                    Ok(_) => {
+                        self.merge_result = Some("Merge successful!".into());
+                    }
+                    Err(e) => {
+                        self.merge_result = Some(format!("Error: {e}"));
+                    }
+                }
+            }
+
+            if let Some(msg) = &self.merge_result {
+                ui.separator();
+                ui.label(msg);
+            }
+        });
+    }
+}
+
+// --- Hook your real merge function here -------------------------------
+pub fn merge_wrapper(input_files: Vec<String>, output_file: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut page_prefix_number: Vec<String> = Vec::new();
 
     let mut merged = Document::with_version("1.5");
@@ -77,7 +134,6 @@ fn main() -> lopdf::Result<()> {
     merged.compress();
     merged.save(output_file)?;
 
-    println!("Merged PDF saved to {}", output_file);
     Ok(())
 }
 
