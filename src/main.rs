@@ -1,8 +1,6 @@
+use eframe::egui;
 use lopdf::{dictionary, Document, Object, Stream};
 use lopdf::content::{Content, Operation};
-use std::env;
-
-use eframe::egui;
 use rfd::FileDialog;
 
 fn main() -> eframe::Result<()> {
@@ -10,64 +8,87 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "PDF Merger",
         options,
-        Box::new(|_cc| Ok(Box::new(MyApp::default()))),
+        Box::new(|_cc| Ok(Box::new(MergeApp::default()))),
     )
 }
 
 #[derive(Default)]
-struct MyApp {
+struct MergeApp {
     input_files: Vec<String>,
-    output_file: String,
-    merge_result: Option<String>,
+    output_file: Option<String>,
+    merge_status: String,
 }
 
-impl eframe::App for MyApp {
+impl eframe::App for MergeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-
         egui::CentralPanel::default().show(ctx, |ui| {
-
             ui.heading("PDF Merger");
 
-            ui.label("Input PDF files (one per line):");
-            for file in &mut self.input_files {
-                ui.text_edit_singleline(file);
-            }
-
-            if ui.button("Add another file").clicked() {
-                self.input_files.push(String::new());
-            }
-
             ui.separator();
 
-            ui.label("Output PDF file:");
-            ui.text_edit_singleline(&mut self.output_file);
+            // Select input files to merge and number
+            ui.label("Input PDF files:");
+            for file in &self.input_files {
+                ui.monospace(format!("• {}", file));
+            }
 
-            ui.separator();
-
-            //------------------------------------------------
-            // THIS is where we call your merge_wrapper()!!!
-            //------------------------------------------------
-            if ui.button("Merge PDFs").clicked() {
-                match merge_wrapper(self.input_files.clone(), self.output_file.clone()) {
-                    Ok(_) => {
-                        self.merge_result = Some("Merge successful!".into());
-                    }
-                    Err(e) => {
-                        self.merge_result = Some(format!("Error: {e}"));
+            if ui.button("Add input files...").clicked() {
+                if let Some(files) = FileDialog::new()
+                    .add_filter("PDF", &["pdf"])
+                    .pick_files()
+                {
+                    // IMPORTANT: append rather than replace
+                    for file in files {
+                        self.input_files.push(file.display().to_string());
                     }
                 }
             }
 
-            if let Some(msg) = &self.merge_result {
-                ui.separator();
-                ui.label(msg);
+            ui.separator();
+
+            // Select the output file
+            ui.label("Output PDF file:");
+            if let Some(out) = &self.output_file {
+                ui.monospace(out);
             }
+
+            if ui.button("Choose output file...").clicked() {
+                if let Some(file) = FileDialog::new()
+                    .add_filter("PDF", &["pdf"])
+                    .save_file()
+                {
+                    self.output_file = Some(file.display().to_string());
+                }
+            }
+
+            ui.separator();
+
+            // Merge the files together
+            if ui.button("Merge PDFs").clicked() {
+                if self.input_files.is_empty() {
+                    self.merge_status = "Error: No input files selected".into();
+                } else if self.output_file.is_none() {
+                    self.merge_status = "Error: No output file selected".into();
+                } else {
+                    match merge_and_number_files(
+                        self.input_files.clone(),
+                        self.output_file.clone().unwrap(),
+                    ) {
+                        Ok(_) => self.merge_status = "Merge complete!".into(),
+                        Err(e) => self.merge_status = format!("Error: {}", e),
+                    }
+                }
+            }
+
+            ui.separator();
+
+            ui.label(&self.merge_status);
         });
     }
 }
 
-// --- Hook your real merge function here -------------------------------
-pub fn merge_wrapper(input_files: Vec<String>, output_file: String) -> Result<(), Box<dyn std::error::Error>> {
+/// Merge the files together and number them A1 ... A3, B1 ... B5, etc.
+pub fn merge_and_number_files(input_files: Vec<String>, output_file: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut page_prefix_number: Vec<String> = Vec::new();
 
     let mut merged = Document::with_version("1.5");
