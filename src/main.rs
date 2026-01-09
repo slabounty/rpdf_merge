@@ -12,17 +12,53 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-#[derive(Default)]
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum MergeMode {
+    MergeOnly,
+    MergeAndNumber,
+}
+
 struct MergeApp {
     input_files: Vec<String>,
     output_file: Option<String>,
     merge_status: String,
+    mode: MergeMode,
+}
+
+impl Default for MergeApp {
+    fn default() -> Self {
+        Self {
+            input_files: Vec::new(),
+            output_file: None,
+            merge_status: String::new(),
+            mode: MergeMode::MergeAndNumber,
+        }
+    }
 }
 
 impl eframe::App for MergeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("PDF Merger");
+
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.label("Mode:");
+
+                ui.radio_value(
+                    &mut self.mode,
+                    MergeMode::MergeAndNumber,
+                    "Merge + Number pages",
+                );
+
+                ui.radio_value(
+                    &mut self.mode,
+                    MergeMode::MergeOnly,
+                    "Merge only",
+                );
+            });
 
             ui.separator();
 
@@ -65,6 +101,7 @@ impl eframe::App for MergeApp {
 
             // Merge the files together
             if ui.button("Merge PDFs").clicked() {
+
                 if self.input_files.is_empty() {
                     self.merge_status = "Error: No input files selected".into();
                 } else if self.output_file.is_none() {
@@ -73,6 +110,7 @@ impl eframe::App for MergeApp {
                     match merge_and_number_files(
                         self.input_files.clone(),
                         self.output_file.clone().unwrap(),
+                        self.mode,
                     ) {
                         Ok(_) => self.merge_status = "Merge complete!".into(),
                         Err(e) => self.merge_status = format!("Error: {}", e),
@@ -88,15 +126,17 @@ impl eframe::App for MergeApp {
 }
 
 /// Merge the files together and number them A1 ... A3, B1 ... B5, etc.
-pub fn merge_and_number_files(input_files: Vec<String>, output_file: String) -> Result<(), Box<dyn std::error::Error>> {
+pub fn merge_and_number_files(input_files: Vec<String>, output_file: String, mode: MergeMode) -> Result<(), Box<dyn std::error::Error>> {
     let (all_pages, mut merged, page_prefix_number) =
         process_input_files(&input_files)?;
 
     build_pages_and_catalog(&mut merged, &all_pages)?;
 
     // Add page numbers
-    for (i, page_id) in all_pages.iter().enumerate() {
-        add_page_number(&mut merged, *page_id, i + 1, &page_prefix_number)?;
+    if mode == MergeMode::MergeAndNumber {
+        for (i, page_id) in all_pages.iter().enumerate() {
+            add_page_number(&mut merged, *page_id, i + 1, &page_prefix_number)?;
+        }
     }
 
     cleanup(&mut merged, &output_file)?;
@@ -207,26 +247,6 @@ fn add_page_number(
     let stream_id = doc.add_object(Stream::new(dictionary! {}, content.encode()?));
 
     attach_stream_to_page(doc, page_id, stream_id)?;
-
-    //// Attach stream to page Contents
-    //let page_obj_mut = doc.get_object_mut(page_id)?;
-    //let dict_mut = page_obj_mut.as_dict_mut()?;
-
-    //match dict_mut.get_mut(b"Contents") {
-        //Ok(Object::Reference(id)) => {
-            //*dict_mut.get_mut(b"Contents").unwrap() =
-                //Object::Array(vec![Object::Reference(*id), Object::Reference(stream_id)]);
-        //}
-        //Ok(Object::Array(arr)) => {
-            //arr.push(Object::Reference(stream_id));
-        //}
-        //Err(_) => {
-            //dict_mut.set("Contents", Object::Reference(stream_id));
-        //}
-        //Ok(_other) => {
-            //dict_mut.set("Contents", Object::Reference(stream_id));
-        //}
-    //}
 
     Ok(())
 }
